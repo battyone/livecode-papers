@@ -1,3 +1,3 @@
 # livecode-papers
 
-More details TBA
+Writing scientific papers in the form of interactive Jupyter/Colab notebooks
