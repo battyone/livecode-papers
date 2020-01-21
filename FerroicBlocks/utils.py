@@ -27,7 +27,7 @@ class generate_batches:
             self.resize_ = args[0]
         except IndexError:
             self.resize_ = None
-    
+
     def steps(self, mode='training'):
         """Estimates number of steps per epoch"""
         if mode == 'val':
@@ -35,7 +35,7 @@ class generate_batches:
         else:
             n_samples = self.f['X_train'][:].shape[0]
         return np.arange(n_samples//self.batch_size)
-    
+
     def batch(self, idx, mode='training'):
         """Generates batch of the selected size
         for training images and the corresponding
@@ -68,29 +68,28 @@ class generate_batches:
             X_batch = X_batch.permute(0, 3, 1, 2)
         y_batch = torch.from_numpy(y_batch).long()
         yield X_batch, y_batch
-            
+
     def close_(self):
         """Closes h5 file"""
         if self.f:
             self.f.close()
             self.f = None
-            
-def torch_format(images, norm=1, n_pooling=3):
+
+def torch_format(images, norm = 1):
     '''Reshapes dimensions, normalizes (optionally) 
        and converts image data to a pytorch float tensor.
        (assumes mage data is stored as numpy array)'''
     if images.ndim == 2:
-        images = np.expand_dims(images, axis=0)
-    images = img_pad(images, n_pooling)
-    images = np.expand_dims(images, axis=1)
+        images = np.expand_dims(images, axis = 0)
+    images = np.expand_dims(images, axis = 1)
     if norm != 0:
         images = (images - np.amin(images))/np.ptp(images)
     images = torch.from_numpy(images).float()
     return images
 
-def predict(images, model, gpu=False):
+def predict(images, model, gpu = False):
     '''Returns probability of each pixel in image
-        belonging to an atom of a particular type'''
+        belonging to an atom of a particualr type'''
     if gpu:
         model.cuda()
         images = images.cuda()
@@ -105,35 +104,10 @@ def predict(images, model, gpu=False):
     prob = prob.permute(0, 2, 3, 1)
     return prob
 
-def img_resize(image_data, rs):
-    '''Image resizing'''
-    image_data_r = np.zeros((image_data.shape[0], rs[0], rs[1]))
-    for i, img in enumerate(image_data):
-        img = cv2.resize(img, (rs[0], rs[1]))
-        image_data_r[i, :, :] = img
-    return image_data_r
-    
-def img_pad(image_data, n_pooling):
-    '''Pads the image if its size (w, h)
-    is not divisible by 2**n, where n is a number
-    of max-pooling layers in a network'''
-    # Pad image rows (height)
-    image_data_p = np.copy(image_data)
-    while image_data_p.shape[1] % 2**n_pooling != 0:
-        d0, _, d2 = image_data_p.shape
-        image_data_p = np.concatenate(
-            (image_data_p, np.zeros((d0, 1, d2))), axis=1)
-    # Pad image columns (width)
-    while image_data_p.shape[2] % 2**n_pooling != 0:
-        d0, d1, _ = image_data_p.shape
-        image_data_p = np.concatenate(
-            (image_data_p, np.zeros((d0, d1, 1))), axis=2)
-    return image_data_p
-
-def find_com(image_data, t=0.5):
+def find_com(image_data, t = 0.5):
     '''Returns center of the mass for all the blobs
        in each channel of network output'''
-    thresh = cv2.threshold(image_data, t, 1, cv2.THRESH_BINARY)[1]
+    thresh = cv2.threshold(image_data,t, 1, cv2.THRESH_BINARY)[1]
     lbls, nlbls = ndimage.label(thresh)
     com = np.array(ndimage.center_of_mass(
         thresh, lbls, np.arange(nlbls)+1))
@@ -163,7 +137,7 @@ def estimate_nnd(com1, com2, icut=500):
     '''Description TBA'''
     d0 = []
     for i, c in enumerate(com1):
-        distance = spatial.cKDTree(com2).query(c)[0]
+        distance = spatial.KDTree(com2).query(c)[0]
         d0.append(distance)
         if i > icut:
             break
@@ -172,7 +146,7 @@ def estimate_nnd(com1, com2, icut=500):
     print('Average nearest-neighbor distance:', np.around(d0))
     return d0
 
-def estimate_rad(input_image, t=0.5, icut=500):
+def estimate_rad(input_image, t= 0.5, icut=500):
     '''Description TBA'''
     thresh = cv2.threshold(
     input_image, t, 1, cv2.THRESH_BINARY)[1]
@@ -191,45 +165,6 @@ def estimate_rad(input_image, t=0.5, icut=500):
     ma0 = 0.5*np.mean(ma0 + 0.5*np.std(ma0))
     print('Average blob radius:', np.around(ma0))
     return ma0
-      
-    
-def sliding_window_decoding(imgdata, model, window_size, step_size, n_pooling, use_gpu=True):
-    '''Applies a trained neural network at each step of sliding window
-    for region of an image within the window's boudnaries and then
-    patches together a full image from the decoded results
-    normalized to account for a sliding window overlap'''
-    
-    decoded_dict = {}
-    for (x, y, window) in sliding_window(imgdata, step_size, window_size):
-        if window.shape[0] != window_size[0] or window.shape[1] != window_size[1]:
-            continue
-        imgdata_ = torch_format(window, window_size, n_pooling)
-        decoded_img = predict(imgdata_, model, use_gpu)
-        k = str(x) + '-' + str(y)
-        decoded_dict[k] = decoded_img[0,:,:,:].detach().cpu().numpy()
-    
-    decoded_image_l = np.zeros((imgdata.shape[0], imgdata.shape[1], decoded_img.shape[-1]))
-    decoded_image_l_ = np.zeros((imgdata.shape[0], imgdata.shape[1], decoded_img.shape[-1]))
-    for k, v in decoded_dict.items():
-        i, j = k.split('-')
-        i = int(i)
-        j = int(j)
-        decoded_image_l[
-            j:j+window_size[0], i:i+window_size[0], :] = decoded_image_l[
-                j:j+window_size[1], i:i+window_size[1], :] + v
-        decoded_image_l_[
-            j:j+window_size[0], i:i+window_size[0], :] = decoded_image_l_[
-                j:j+window_size[1], i:i+window_size[1], :] + 1
-    return decoded_image_l/decoded_image_l_
-
-
-def sliding_window(image, step_size, window_size):
-    '''Returns coordinates of the sliding window and the window itself'''
-    
-    for y in range(0, image.shape[0], step_size):
-        for x in range(0, image.shape[1], step_size):
-            yield (x, y, image[y:y + window_size[1], x:x + window_size[0]])
-            
 
 def color_list():
     '''Returns a list of colors for scatter/line plots'''
